@@ -1,0 +1,216 @@
+
+(function () {
+    'use strict';
+
+    if (window.torbox_ptbr_v2) return;
+    window.torbox_ptbr_v2 = true;
+
+    var API = 'https://api.torbox.app/v1/api';
+    var KEY = 'torbox_ptbr_api_v2';
+
+    function apiKey() {
+        return Lampa.Storage.get(KEY, '') || '';
+    }
+
+    function aviso(msg) {
+        Lampa.Noty.show(msg);
+    }
+
+    function portugues(nome) {
+        nome = String(nome || '');
+
+        if (/portugu[eê]s\s*\(\s*portugal\s*\)/i.test(nome)) {
+            return false;
+        }
+
+        return /PT[-_. ]?BR|DUBLADO|DUAL[-_. ]?AUDIO|PORTUGU[EÊ]S|BRAZILIAN/i.test(nome);
+    }
+
+    function consultar(url, callback, erro) {
+        $.ajax({
+            url: url,
+            method: 'GET',
+            headers: {
+                Authorization: 'Bearer ' + apiKey()
+            },
+            dataType: 'json',
+            timeout: 30000,
+            success: function (res) {
+                if (res && res.success === false) {
+                    erro(res.detail || 'Erro na API TorBox');
+                    return;
+                }
+                callback(res);
+            },
+            error: function (xhr) {
+                erro('Erro HTTP ' + xhr.status);
+            }
+        });
+    }
+
+    function TelaTorbox() {
+        var self = this;
+        var root = $('<div class="torbox-v2 screen"></div>');
+        var lista = $('<div class="torbox-v2-list"></div>');
+
+        this.create = function () {
+            root.append(
+                $('<div class="head__title">TORBOX PT-BR</div>')
+            );
+            root.append(lista);
+        };
+
+        this.render = function () {
+            return root;
+        };
+
+        this.start = function () {
+            carregar();
+        };
+
+        function carregar() {
+            if (!apiKey()) {
+                aviso('Configure sua API Key TorBox nas configurações.');
+                return;
+            }
+
+            lista.empty().append(
+                $('<div class="selector">Carregando arquivos...</div>')
+            );
+
+            consultar(
+                API + '/torrents/mylist?bypass_cache=true&limit=100&offset=0&files=true',
+                function (res) {
+                    lista.empty();
+
+                    var torrents = res && res.data;
+
+                    if (!Array.isArray(torrents) || !torrents.length) {
+                        lista.append(
+                            $('<div class="selector">Nenhum torrent encontrado na conta.</div>')
+                        );
+                        return;
+                    }
+
+                    var total = 0;
+
+                    torrents.forEach(function (torrent) {
+                        (torrent.files || []).forEach(function (file) {
+                            if (!portugues(file.name)) return;
+
+                            total++;
+
+                            var item = $('<div class="selector torbox-v2-item"></div>');
+
+                            item.text(
+                                (torrent.name || 'Arquivo TorBox') +
+                                ' | ' + file.name
+                            );
+
+                            item.on('hover:enter', function () {
+                                reproduzir(torrent.id, file.id, file.name);
+                            });
+
+                            lista.append(item);
+                        });
+                    });
+
+                    if (!total) {
+                        lista.append(
+                            $('<div class="selector">Não foram encontrados arquivos com indicação PT-BR.</div>')
+                        );
+                    }
+                },
+                function (msg) {
+                    lista.empty().append(
+                        $('<div class="selector"></div>').text(msg)
+                    );
+                }
+            );
+        }
+
+        function reproduzir(torrentId, fileId, nome) {
+            var url = API + '/torrents/requestdl?' +
+                'token=' + encodeURIComponent(apiKey()) +
+                '&torrent_id=' + encodeURIComponent(torrentId) +
+                '&file_id=' + encodeURIComponent(fileId) +
+                '&redirect=true';
+
+            aviso('Solicitando reprodução ao TorBox...');
+
+            Lampa.Player.play({
+                url: url,
+                title: nome,
+                quality: 'auto'
+            });
+        }
+
+        this.back = function () {
+            Lampa.Activity.backward();
+        };
+
+        this.destroy = function () {
+            root.remove();
+        };
+    }
+
+    function iniciar() {
+        if (!window.Lampa || !Lampa.Component ||
+            !Lampa.SettingsApi || !window.$) return;
+
+        Lampa.Component.add(
+            'torbox_ptbr_v2_screen',
+            TelaTorbox
+        );
+
+        Lampa.SettingsApi.addComponent({
+            component: 'torbox_ptbr_v2',
+            name: 'TorBox PT-BR',
+            icon: '<svg viewBox="0 0 24 24"><path fill="currentColor" d="M4 3h16v18H4z"/></svg>'
+        });
+
+        Lampa.SettingsApi.addParam({
+            component: 'torbox_ptbr_v2',
+            param: {
+                name: KEY,
+                type: 'input',
+                default: '',
+                placeholder: 'Cole sua API Key'
+            },
+            field: {
+                name: 'API Key TorBox',
+                description: 'Chave pessoal da sua conta TorBox'
+            }
+        });
+
+        var menu = $('.menu .menu__list').eq(0);
+
+        if (menu.length && !menu.find('.torbox-v2-menu').length) {
+            var botao = $(
+                '<li class="menu__item selector torbox-v2-menu">' +
+                '<div class="menu__ico">TB</div>' +
+                '<div class="menu__text">TorBox PT-BR</div>' +
+                '</li>'
+            );
+
+            botao.on('hover:enter', function () {
+                Lampa.Activity.push({
+                    url: '',
+                    title: 'TorBox PT-BR',
+                    component: 'torbox_ptbr_v2_screen',
+                    page: 1
+                });
+            });
+
+            menu.append(botao);
+        }
+    }
+
+    if (window.appready) {
+        iniciar();
+    } else {
+        Lampa.Listener.follow('app', function (event) {
+            if (event.type === 'ready') iniciar();
+        });
+    }
+})();
